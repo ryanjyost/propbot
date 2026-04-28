@@ -10,7 +10,7 @@ public class GroupMeCallbackController {
 
     private static final Logger log = LoggerFactory.getLogger(GroupMeCallbackController.class);
 
-    @PostMapping("/callback")
+    @PostMapping("/groupme-bot-callback")
     public ResponseEntity<Void> onMessage(@RequestBody GroupMeMessage message) {
         if (message.system()) {
             log.info("[system] group_id={} text={}", message.groupId(), message.text());
