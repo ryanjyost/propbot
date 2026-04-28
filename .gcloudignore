@@ -1,0 +1,8 @@
+.git
+.gitignore
+target/
+*.log
+.firebase/
+.agents/
+.claude/
+node_modules/
