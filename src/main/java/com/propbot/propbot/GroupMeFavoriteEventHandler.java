@@ -12,6 +12,11 @@ import org.springframework.stereotype.Component;
 public class GroupMeFavoriteEventHandler {
 
     private static final AppLog log = AppLog.forClass(GroupMeFavoriteEventHandler.class);
+    private final GoogleSheetsService googleSheetsService;
+
+    public GroupMeFavoriteEventHandler(GoogleSheetsService googleSheetsService) {
+        this.googleSheetsService = googleSheetsService;
+    }
 
     public boolean isFavoriteEvent(Map<String, Object> payload) {
         return "favorite".equals(stringOrEmpty(payload.get("type")));
@@ -22,13 +27,14 @@ public class GroupMeFavoriteEventHandler {
             return false;
         }
         logFavorite(payload, source);
+        googleSheetsService.syncFavoriteReactions(payload);
         return true;
     }
 
     public void logFavorite(Map<String, Object> payload, String source) {
         Map<String, Object> subject = asMap(payload.get("subject"));
-        String lineId = stringOrEmpty(asMap(subject.get("line")).get("id"));
         String userId = stringOrEmpty(subject.get("user_id"));
+        String userName = stringOrEmpty(asMap(subject.get("line")).get("name"));
         String emojiCodes = asList(subject.get("reactions")).stream()
                 .map(GroupMeFavoriteEventHandler::asMap)
                 .map(reaction -> stringOrEmpty(reaction.get("code")))
@@ -41,12 +47,12 @@ public class GroupMeFavoriteEventHandler {
         }
 
         Map<String, Object> fields = new LinkedHashMap<>();
-        fields.put("source", source == null ? "" : source);
-        fields.put("line.id", lineId.isBlank() ? "(missing)" : lineId);
-        fields.put("subject.user_id", userId.isBlank() ? "(missing)" : userId);
-        fields.put("subject.reactions[].code", emojiCodes.isBlank() ? "(none)" : emojiCodes);
-        fields.put("subject", subject);
-        fields.put("payload", payload);
+        fields.put("user_id", userId);
+        fields.put("name", userName);
+
+        fields.put("reaction", emojiCodes);
+        // fields.put("subject", subject);
+        // fields.put("payload", payload);
 
         log.info(headline, fields);
     }

@@ -1,8 +1,7 @@
 package com.propbot.propbot;
 
-import static java.lang.System.lineSeparator;
-
 import com.propbot.logging.AppLog;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -42,21 +41,17 @@ public class GroupMeCallbackController {
             if (senderUserId.isBlank()) {
                 senderUserId = stringOrEmpty(payload.get("sender_id"));
             }
-            log.info(
-                    "📩 Incoming message",
-                    "From: "
-                            + stringOrEmpty(payload.get("name"))
-                            + lineSeparator()
-                            + "User ID: "
-                            + (senderUserId.isBlank() ? "(missing)" : senderUserId)
-                            + lineSeparator()
-                            + "Content: "
-                            + humanMessageBody(text));
+            String messageId = stringOrEmpty(payload.get("id"));
+            Map<String, Object> incoming = new LinkedHashMap<>();
+            incoming.put("from", stringOrEmpty(payload.get("name")));
+            incoming.put("userId", senderUserId.isBlank() ? null : senderUserId);
+            incoming.put("content", humanMessageBody(text));
+            incoming.put("messageId", messageId.isBlank() ? null : messageId);
+            log.info("Incoming message", incoming);
             googleSheetsService.appendIncomingMessage(
-                    senderUserId, stringOrEmpty(payload.get("name")), text);
+                    messageId, senderUserId, stringOrEmpty(payload.get("name")), text);
             try {
                 String groupId = stringOrEmpty(payload.get("group_id"));
-                String messageId = stringOrEmpty(payload.get("id"));
                 if (!groupId.isBlank() && !messageId.isBlank()) {
                     groupMeActions.reactWithUnicode(groupId, messageId, TEST_REACTION);
                 }
