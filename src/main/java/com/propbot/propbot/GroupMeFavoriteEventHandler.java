@@ -1,7 +1,5 @@
 package com.propbot.propbot;
 
-import static java.lang.System.lineSeparator;
-
 import com.propbot.logging.AppLog;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,19 +40,15 @@ public class GroupMeFavoriteEventHandler {
             headline += " (" + source + ")";
         }
 
-        log.info(
-                headline,
-                "line.id: "
-                        + (lineId.isBlank() ? "(missing)" : lineId)
-                        + lineSeparator()
-                        + "subject.user_id: "
-                        + (userId.isBlank() ? "(missing)" : userId)
-                        + lineSeparator()
-                        + "subject.reactions[].code: "
-                        + (emojiCodes.isBlank() ? "(none)" : emojiCodes));
-                        // + lineSeparator()
-                        // + "raw payload: "
-                        // + payload);
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("source", source == null ? "" : source);
+        fields.put("line.id", lineId.isBlank() ? "(missing)" : lineId);
+        fields.put("subject.user_id", userId.isBlank() ? "(missing)" : userId);
+        fields.put("subject.reactions[].code", emojiCodes.isBlank() ? "(none)" : emojiCodes);
+        fields.put("subject", subject);
+        fields.put("payload", payload);
+
+        log.info(headline, fields);
     }
 
     private static Map<String, Object> asMap(Object value) {

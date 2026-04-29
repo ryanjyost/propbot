@@ -1,7 +1,11 @@
 package com.propbot.logging;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -16,6 +20,10 @@ import org.slf4j.LoggerFactory;
 public final class AppLog {
 
     private static final String NL = System.lineSeparator();
+
+    private static final ObjectMapper PRETTY_JSON = new ObjectMapper()
+            .enable(SerializationFeature.INDENT_OUTPUT)
+            .findAndRegisterModules();
 
     private final Logger backend;
 
@@ -33,6 +41,14 @@ public final class AppLog {
 
     public void info(String headline, String detail) {
         emit(backend::isInfoEnabled, backend::info, headline, detail);
+    }
+
+    /**
+     * Structured log: headline, then a pretty-printed JSON object (key/value fields, nested maps/lists
+     * serialized by Jackson).
+     */
+    public void info(String headline, Map<String, ?> fields) {
+        emit(backend::isInfoEnabled, backend::info, headline, toPrettyJson(fields));
     }
 
     /** Headline only (still followed by a blank line for separation). */
@@ -95,6 +111,17 @@ public final class AppLog {
         String h = headline == null ? "" : headline;
         String d = detail == null ? "" : detail;
         sink.accept(h + NL + d + NL);
+    }
+
+    private static String toPrettyJson(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        try {
+            return PRETTY_JSON.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            return String.valueOf(value);
+        }
     }
 
     private static String stackTrace(Throwable t) {
