@@ -3,10 +3,7 @@ package com.propbot.propbot;
 import static java.lang.System.lineSeparator;
 
 import com.propbot.logging.AppLog;
-import java.util.Collections;
-import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,18 +12,24 @@ public class GroupMeCallbackController {
 
     private static final AppLog log = AppLog.forClass(GroupMeCallbackController.class);
 
-    private static final String TEST_REACTION = "👀";
+    private static final String TEST_REACTION = "🙏";
 
     private final GroupMeActions groupMeActions;
+    private final GroupMeFavoriteEventHandler favoriteEventHandler;
+    private final GoogleSheetsService googleSheetsService;
 
-    public GroupMeCallbackController(GroupMeActions groupMeActions) {
+    public GroupMeCallbackController(
+            GroupMeActions groupMeActions,
+            GroupMeFavoriteEventHandler favoriteEventHandler,
+            GoogleSheetsService googleSheetsService) {
         this.groupMeActions = groupMeActions;
+        this.favoriteEventHandler = favoriteEventHandler;
+        this.googleSheetsService = googleSheetsService;
     }
 
     @PostMapping("/groupme-bot-callback")
     public ResponseEntity<Void> onMessage(@RequestBody Map<String, Object> payload) {
-        if (isFavoriteEvent(payload)) {
-            onFavorite(payload);
+        if (favoriteEventHandler.handleIfFavorite(payload, "callback")) {
             return ResponseEntity.ok().build();
         }
 
@@ -35,13 +38,22 @@ public class GroupMeCallbackController {
         if (system) {
             log.info("⚙️ System message", nullToEmpty(text));
         } else {
+            String senderUserId = stringOrEmpty(payload.get("user_id"));
+            if (senderUserId.isBlank()) {
+                senderUserId = stringOrEmpty(payload.get("sender_id"));
+            }
             log.info(
                     "📩 Incoming message",
                     "From: "
                             + stringOrEmpty(payload.get("name"))
                             + lineSeparator()
+                            + "User ID: "
+                            + (senderUserId.isBlank() ? "(missing)" : senderUserId)
+                            + lineSeparator()
                             + "Content: "
                             + humanMessageBody(text));
+            googleSheetsService.appendIncomingMessage(
+                    senderUserId, stringOrEmpty(payload.get("name")), text);
             try {
                 String groupId = stringOrEmpty(payload.get("group_id"));
                 String messageId = stringOrEmpty(payload.get("id"));
@@ -53,51 +65,6 @@ public class GroupMeCallbackController {
             }
         }
         return ResponseEntity.ok().build();
-    }
-
-    private void onFavorite(Map<String, Object> payload) {
-        Map<String, Object> subject = asMap(payload.get("subject"));
-        String lineId = stringOrEmpty(asMap(subject.get("line")).get("id"));
-        String userId = stringOrEmpty(subject.get("user_id"));
-        String emojiCodes = asList(subject.get("reactions")).stream()
-                .map(GroupMeCallbackController::asMap)
-                .map(reaction -> stringOrEmpty(reaction.get("code")))
-                .filter(code -> !code.isBlank())
-                .collect(Collectors.joining(" "));
-
-        log.info(
-                "⭐ Favorite/reaction event",
-                "line.id: "
-                        + (lineId.isBlank() ? "(missing)" : lineId)
-                        + lineSeparator()
-                        + "subject.user_id: "
-                        + (userId.isBlank() ? "(missing)" : userId)
-                        + lineSeparator()
-                        + "subject.reactions[].code: "
-                        + (emojiCodes.isBlank() ? "(none)" : emojiCodes)
-                        + lineSeparator()
-                        + "raw payload: "
-                        + payload);
-    }
-
-    private static boolean isFavoriteEvent(Map<String, Object> payload) {
-        return "favorite".equals(stringOrEmpty(payload.get("type")));
-    }
-
-    private static Map<String, Object> asMap(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            return map.entrySet().stream().collect(Collectors.toMap(
-                    entry -> String.valueOf(entry.getKey()),
-                    Map.Entry::getValue));
-        }
-        return Collections.emptyMap();
-    }
-
-    private static List<Object> asList(Object value) {
-        if (value instanceof List<?> list) {
-            return list.stream().map(item -> (Object) item).toList();
-        }
-        return List.of();
     }
 
     private static String stringOrEmpty(Object value) {

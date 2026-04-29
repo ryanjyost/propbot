@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableConfigurationProperties(GroupMeProperties.class)
+@EnableConfigurationProperties({GroupMeProperties.class, GoogleSheetsProperties.class})
 public class PropbotApplication {
 
 	public static void main(String[] args) {

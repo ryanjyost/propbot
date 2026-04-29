@@ -1,7 +1,5 @@
 package com.propbot.propbot;
 
-import static java.lang.System.lineSeparator;
-
 import com.propbot.logging.AppLog;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
@@ -10,10 +8,10 @@ import java.net.http.WebSocket;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -31,7 +29,7 @@ import org.springframework.stereotype.Component;
 /**
  * Minimal Bayeux/WebSocket listener for GroupMe push events.
  *
- * <p>Subscribes to /user/:userId and logs "favorite" reaction events.
+ * <p>Subscribes to configured push channels and logs "favorite" reaction events.
  */
 @Component
 public class GroupMePushListener {
@@ -40,6 +38,7 @@ public class GroupMePushListener {
     private static final Duration RECONNECT_DELAY = Duration.ofSeconds(5);
 
     private final GroupMeProperties groupMe;
+    private final GroupMeFavoriteEventHandler favoriteEventHandler;
     private final JsonParser jsonParser = JsonParserFactory.getJsonParser();
     private final ExecutorService worker =
             Executors.newSingleThreadExecutor(r -> new Thread(r, "groupme-push-listener"));
@@ -49,8 +48,9 @@ public class GroupMePushListener {
     private volatile String clientId;
     private volatile WebSocket webSocket;
 
-    public GroupMePushListener(GroupMeProperties groupMe) {
+    public GroupMePushListener(GroupMeProperties groupMe, GroupMeFavoriteEventHandler favoriteEventHandler) {
         this.groupMe = groupMe;
+        this.favoriteEventHandler = favoriteEventHandler;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -58,7 +58,7 @@ public class GroupMePushListener {
         if (!isConfigured()) {
             log.info(
                     "GroupMe push listener disabled",
-                    "Set GROUPME_ACCESS_TOKEN and GROUPME_PUSH_USER_ID to enable /user/:id reactions.");
+                    "Set GROUPME_ACCESS_TOKEN and at least one of GROUPME_PUSH_USER_ID or GROUPME_GROUP_ID.");
             return;
         }
         if (!running.compareAndSet(false, true)) {
@@ -101,7 +101,8 @@ public class GroupMePushListener {
     }
 
     private boolean isConfigured() {
-        return !stringOrEmpty(groupMe.accessToken()).isBlank() && !stringOrEmpty(groupMe.pushUserId()).isBlank();
+        return !stringOrEmpty(groupMe.accessToken()).isBlank()
+                && (!stringOrEmpty(groupMe.pushUserId()).isBlank() || !stringOrEmpty(groupMe.groupId()).isBlank());
     }
 
     private void sendHandshake() {
@@ -116,10 +117,12 @@ public class GroupMePushListener {
         if (stringOrEmpty(clientId).isBlank()) {
             return;
         }
-        Map<String, Object> msg = baseMetaMessage("/meta/subscribe");
-        msg.put("clientId", clientId);
-        msg.put("subscription", userChannel());
-        send(msg);
+        for (String subscriptionChannel : channelsForSubscription()) {
+            Map<String, Object> msg = baseMetaMessage("/meta/subscribe");
+            msg.put("clientId", clientId);
+            msg.put("subscription", subscriptionChannel);
+            send(msg);
+        }
     }
 
     private void sendConnect() {
@@ -174,49 +177,24 @@ public class GroupMePushListener {
             }
             if ("/meta/subscribe".equals(channel)) {
                 if (booleanOrFalse(message.get("successful"))) {
-                    log.info("GroupMe push subscribed", "channel=" + userChannel());
+                    String subscribedChannel = stringOrEmpty(message.get("subscription"));
+                    if (subscribedChannel.isBlank()) {
+                        subscribedChannel = "(unknown)";
+                    }
+                    log.info("GroupMe push subscribed", "channel=" + subscribedChannel);
                 } else {
                     log.warn("GroupMe push subscribe failed", String.valueOf(message));
                 }
                 continue;
             }
-            if (userChannel().equals(channel)) {
+            if (channelsForSubscription().contains(channel)) {
                 Map<String, Object> data = asMap(message.get("data"));
                 if (data.isEmpty()) {
                     data = message;
                 }
-                onUserEvent(data);
+                favoriteEventHandler.handleIfFavorite(data, "websocket");
             }
         }
-    }
-
-    private void onUserEvent(Map<String, Object> payload) {
-        if (!"favorite".equals(stringOrEmpty(payload.get("type")))) {
-            return;
-        }
-
-        Map<String, Object> subject = asMap(payload.get("subject"));
-        String lineId = stringOrEmpty(asMap(subject.get("line")).get("id"));
-        String userId = stringOrEmpty(subject.get("user_id"));
-        String emojiCodes = asList(subject.get("reactions")).stream()
-                .map(GroupMePushListener::asMap)
-                .map(reaction -> stringOrEmpty(reaction.get("code")))
-                .filter(code -> !code.isBlank())
-                .collect(Collectors.joining(" "));
-
-        log.info(
-                "⭐ GroupMe favorite from websocket",
-                "line.id: "
-                        + (lineId.isBlank() ? "(missing)" : lineId)
-                        + lineSeparator()
-                        + "subject.user_id: "
-                        + (userId.isBlank() ? "(missing)" : userId)
-                        + lineSeparator()
-                        + "subject.reactions[].code: "
-                        + (emojiCodes.isBlank() ? "(none)" : emojiCodes)
-                        + lineSeparator()
-                        + "raw payload: "
-                        + payload);
     }
 
     private List<Map<String, Object>> parseEnvelope(String text) {
@@ -247,6 +225,21 @@ public class GroupMePushListener {
         return "/user/" + groupMe.pushUserId();
     }
 
+    private String groupChannel() {
+        return "/group/" + groupMe.groupId();
+    }
+
+    private List<String> channelsForSubscription() {
+        LinkedHashSet<String> channels = new LinkedHashSet<>();
+        if (!stringOrEmpty(groupMe.pushUserId()).isBlank()) {
+            channels.add(userChannel());
+        }
+        if (!stringOrEmpty(groupMe.groupId()).isBlank()) {
+            channels.add(groupChannel());
+        }
+        return List.copyOf(channels);
+    }
+
     private static void sleep(Duration delay) {
         try {
             Thread.sleep(delay.toMillis());
@@ -259,18 +252,14 @@ public class GroupMePushListener {
         if (!(value instanceof Map<?, ?> map)) {
             return Map.of();
         }
-        return map.entrySet().stream().filter(entry -> entry.getKey() != null).collect(Collectors.toMap(
-                entry -> String.valueOf(entry.getKey()),
-                entry -> entry.getValue(),
-                (a, b) -> b,
-                LinkedHashMap::new));
-    }
-
-    private static List<Object> asList(Object value) {
-        if (value instanceof List<?> list) {
-            return list.stream().filter(Objects::nonNull).map(item -> (Object) item).toList();
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getKey() == null) {
+                continue;
+            }
+            out.put(String.valueOf(entry.getKey()), entry.getValue());
         }
-        return List.of();
+        return out;
     }
 
     private static String stringOrEmpty(Object value) {
