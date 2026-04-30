@@ -6,12 +6,18 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record GoogleSheetsProperties(
         String spreadsheetId,
         String sheetName,
-        /** Optional explicit bearer token (short-lived). Prefer credentials below for production. */
+        String perBetSheetName,
+        /**
+         * Optional explicit bearer token (short-lived). Prefer credentials below for
+         * production.
+         */
         String accessToken,
         /** Path to a service account JSON key file (local/dev). */
         String credentialsPath,
         /**
-         * When true, uses {@link com.google.auth.oauth2.GoogleCredentials#getApplicationDefault()} to mint
+         * When true, uses
+         * {@link com.google.auth.oauth2.GoogleCredentials#getApplicationDefault()} to
+         * mint
          * access tokens (recommended on Cloud Run with a service account attached).
          */
         boolean useApplicationDefaultCredentials,
@@ -20,6 +26,9 @@ public record GoogleSheetsProperties(
     public GoogleSheetsProperties {
         if (sheetName == null || sheetName.isBlank()) {
             sheetName = "Sheet1";
+        }
+        if (perBetSheetName == null || perBetSheetName.isBlank()) {
+            perBetSheetName = "Per_Person";
         }
         if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
             apiBaseUrl = "https://sheets.googleapis.com/v4";

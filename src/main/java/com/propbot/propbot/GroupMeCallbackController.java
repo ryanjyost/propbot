@@ -1,7 +1,6 @@
 package com.propbot.propbot;
 
 import com.propbot.logging.AppLog;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -11,19 +10,14 @@ public class GroupMeCallbackController {
 
     private static final AppLog log = AppLog.forClass(GroupMeCallbackController.class);
 
-    private static final String TEST_REACTION = "🙏";
-
-    private final GroupMeActions groupMeActions;
     private final GroupMeFavoriteEventHandler favoriteEventHandler;
-    private final GoogleSheetsService googleSheetsService;
+    private final GroupMeIncomingMessageHandler incomingMessageHandler;
 
     public GroupMeCallbackController(
-            GroupMeActions groupMeActions,
             GroupMeFavoriteEventHandler favoriteEventHandler,
-            GoogleSheetsService googleSheetsService) {
-        this.groupMeActions = groupMeActions;
+            GroupMeIncomingMessageHandler incomingMessageHandler) {
         this.favoriteEventHandler = favoriteEventHandler;
-        this.googleSheetsService = googleSheetsService;
+        this.incomingMessageHandler = incomingMessageHandler;
     }
 
     @PostMapping("/groupme-bot-callback")
@@ -37,27 +31,7 @@ public class GroupMeCallbackController {
         if (system) {
             log.info("⚙️ System message", nullToEmpty(text));
         } else {
-            String senderUserId = stringOrEmpty(payload.get("user_id"));
-            if (senderUserId.isBlank()) {
-                senderUserId = stringOrEmpty(payload.get("sender_id"));
-            }
-            String messageId = stringOrEmpty(payload.get("id"));
-            Map<String, Object> incoming = new LinkedHashMap<>();
-            incoming.put("from", stringOrEmpty(payload.get("name")));
-            incoming.put("userId", senderUserId.isBlank() ? null : senderUserId);
-            incoming.put("content", humanMessageBody(text));
-            incoming.put("messageId", messageId.isBlank() ? null : messageId);
-            log.info("Incoming message", incoming);
-            googleSheetsService.appendIncomingMessage(
-                    messageId, senderUserId, stringOrEmpty(payload.get("name")), text);
-            try {
-                String groupId = stringOrEmpty(payload.get("group_id"));
-                if (!groupId.isBlank() && !messageId.isBlank()) {
-                    groupMeActions.reactWithUnicode(groupId, messageId, TEST_REACTION);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to react (message_id=" + stringOrEmpty(payload.get("id")) + ")", e);
-            }
+            incomingMessageHandler.handleIncomingMessage(payload, text);
         }
         return ResponseEntity.ok().build();
     }
@@ -77,10 +51,4 @@ public class GroupMeCallbackController {
         return s == null ? "" : s;
     }
 
-    private static String humanMessageBody(String text) {
-        if (text == null || text.isBlank()) {
-            return "(no text)";
-        }
-        return text;
-    }
 }

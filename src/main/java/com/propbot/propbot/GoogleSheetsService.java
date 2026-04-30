@@ -209,7 +209,7 @@ public class GoogleSheetsService {
 
                 if (senderColIndex >= FIRST_USER_COLUMN_INDEX) {
                     String senderCellRef = sheet + "!" + columnIndexToA1Letter(senderColIndex) + messageRow;
-                    updates.add(updateRange(senderCellRef, List.of(List.of("="))));
+                    updates.add(updateRange(senderCellRef, List.of(List.of("👍"))));
                 }
 
                 for (Map.Entry<String, String> entry : emojiByUserId.entrySet()) {
@@ -228,6 +228,74 @@ public class GoogleSheetsService {
                 log.warn("Failed to sync favorite reactions to Google Sheets", e);
             }
         }
+    }
+
+    /**
+     * Reads {@code Per_Person} (or configured equivalent) and returns the row for
+     * the supplied GroupMe user id.
+     */
+    public PerBetSummary findPerBetSummaryByUserId(String userId) {
+        if (!isConfigured()) {
+            log.info("Per-person lookup skipped: Sheets not configured", "");
+            return null;
+        }
+        String uid = stringOrEmpty(userId).strip();
+        if (uid.isBlank()) {
+            log.info("Per-person lookup skipped: blank user id", "");
+            return null;
+        }
+        String normalizedTargetUserId = normalizeUserId(uid);
+        try {
+            String token = bearerToken();
+            String range = properties.perBetSheetName() + "!A:G";
+            log.info("Reading per-person sheet", Map.of("sheet", properties.perBetSheetName(), "userId", uid));
+            String body = restClient
+                    .get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/spreadsheets/{spreadsheetId}/values/{range}")
+                            .build(properties.spreadsheetId(), range))
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                    .retrieve()
+                    .body(String.class);
+            List<List<Object>> rows = parseValuesMatrix(body);
+            log.info("Per-person rows fetched", Map.of("rows", rows.size()));
+            for (int i = 1; i < rows.size(); i++) {
+                List<Object> row = rows.get(i);
+                String idInSheet = cell(row, 0);
+                if (!normalizedTargetUserId.equals(normalizeUserId(idInSheet))) {
+                    continue;
+                }
+                PerBetSummary summary = new PerBetSummary(
+                        idInSheet,
+                        cell(row, 1),
+                        cell(row, 2),
+                        cell(row, 3),
+                        cell(row, 4),
+                        cell(row, 5),
+                        cell(row, 6));
+                log.info("Per-person row matched", Map.of("userId", uid, "name", summary.name()));
+                return summary;
+            }
+            log.info("Per-person row not found", Map.of("userId", uid, "sheet", properties.perBetSheetName()));
+        } catch (Exception e) {
+            log.warn("Failed to read per-person summary from Google Sheets", e);
+        }
+        return null;
+    }
+
+    private static String normalizeUserId(String userId) {
+        String value = stringOrEmpty(userId).strip();
+        if (value.endsWith(".0")) {
+            value = value.substring(0, value.length() - 2);
+        }
+        if (value.chars().allMatch(ch -> Character.isDigit(ch))) {
+            return value;
+        }
+        String digitsOnly = value.replaceAll("\\D", "");
+        if (!digitsOnly.isBlank()) {
+            return digitsOnly;
+        }
+        return value;
     }
 
     private boolean isConfigured() {
@@ -560,6 +628,13 @@ public class GoogleSheetsService {
         return v == null || stringOrEmpty(v).isBlank();
     }
 
+    private static String cell(List<Object> row, int index) {
+        if (row == null || index < 0 || index >= row.size()) {
+            return "";
+        }
+        return stringOrEmpty(row.get(index)).strip();
+    }
+
     private int appendToMessageLog(String token, String messageId, String messageText) {
         String range = properties.sheetName() + "!A" + MESSAGE_LOG_START_ROW + ":B";
         Map<String, Object> body = Map.of("values", List.of(List.of(messageId, messageText)));
@@ -690,5 +765,15 @@ public class GoogleSheetsService {
 
     private static String stringOrEmpty(Object o) {
         return o == null ? "" : String.valueOf(o);
+    }
+
+    public record PerBetSummary(
+            String userId,
+            String name,
+            String totalBets,
+            String atRisk,
+            String potentialPayout,
+            String potentialWinnings,
+            String pnl) {
     }
 }

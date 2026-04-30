@@ -10,15 +10,20 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 /**
- * GroupMe API actions (reactions, etc.). Uses {@code POST /messages/{conversation}/{id}/like}
- * under {@link GroupMeProperties#apiBaseUrl()} (default {@code https://api.groupme.com/v3}).
+ * GroupMe API actions (reactions, etc.). Uses
+ * {@code POST /messages/{conversation}/{id}/like}
+ * under {@link GroupMeProperties#apiBaseUrl()} (default
+ * {@code https://api.groupme.com/v3}).
  */
 @Service
 public class GroupMeActions {
 
     private static final AppLog log = AppLog.forClass(GroupMeActions.class);
 
-    /** GroupMe's allowed unicode reactions for {@code like_icon}; anything else is rejected by their API. */
+    /**
+     * GroupMe's allowed unicode reactions for {@code like_icon}; anything else is
+     * rejected by their API.
+     */
     private static final Set<String> ALLOWED_UNICODE_REACTIONS = Set.of(
             "❤️", "👍", "🤣", "🎉", "🔥", "😮", "👀", "😭", "🥺", "🙏", "💀", "🫶", "🤬", "💅", "🫠");
 
@@ -42,7 +47,15 @@ public class GroupMeActions {
         }
     }
 
-    /** The unicode reactions this app will send (matches GroupMe client options). */
+    private void requireBotId() {
+        if (properties.botId() == null || properties.botId().isBlank()) {
+            throw new IllegalStateException("GROUPME_BOT_ID is not set");
+        }
+    }
+
+    /**
+     * The unicode reactions this app will send (matches GroupMe client options).
+     */
     public static Set<String> allowedUnicodeReactions() {
         return ALLOWED_UNICODE_REACTIONS;
     }
@@ -88,7 +101,10 @@ public class GroupMeActions {
                 "Pack " + packId + ", sticker #" + packIndex);
     }
 
-    /** Convenience: react on the message from a webhook payload (uses group id + message id). */
+    /**
+     * Convenience: react on the message from a webhook payload (uses group id +
+     * message id).
+     */
     public void reactWithUnicode(GroupMeMessage message, String unicodeEmoji) {
         reactWithUnicode(message.groupId(), message.id(), unicodeEmoji);
     }
@@ -96,6 +112,43 @@ public class GroupMeActions {
     /** Convenience: powerup reaction on a webhook message. */
     public void reactWithPowerup(GroupMeMessage message, int packId, int packIndex) {
         reactWithPowerup(message.groupId(), message.id(), packId, packIndex);
+    }
+
+    /**
+     * Sends a plain text message via bot identity to the configured GroupMe group.
+     */
+    public void sendBotMessage(String text) {
+        sendBotMessage(text, "");
+    }
+
+    /**
+     * Sends a plain text message via bot identity and optionally replies to a
+     * specific message.
+     */
+    public void sendBotMessage(String text, String replyToMessageId) {
+        requireBotId();
+        String bodyText = text == null ? "" : text.strip();
+        if (bodyText.isBlank()) {
+            return;
+        }
+        String replyId = replyToMessageId == null ? "" : replyToMessageId.strip();
+        log.info("Sending bot message", Map.of("text", bodyText, "replyToMessageId", replyId));
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("bot_id", properties.botId().strip());
+        body.put("text", bodyText);
+        if (!replyId.isBlank()) {
+            body.put(
+                    "attachments",
+                    java.util.List.of(Map.of("type", "reply", "reply_id", replyId, "base_reply_id", replyId)));
+        }
+        var response = restClient
+                .post()
+                .uri("/bots/post")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+        log.info("Bot message sent", "HTTP " + response.getStatusCode().value() + ".");
     }
 
     private void postLike(
@@ -110,8 +163,7 @@ public class GroupMeActions {
                 .body(body)
                 .retrieve()
                 .toBodilessEntity();
-        String detail =
-                (logDetail == null || logDetail.isBlank()) ? "" : logDetail + lineSeparator();
+        String detail = (logDetail == null || logDetail.isBlank()) ? "" : logDetail + lineSeparator();
         log.info(logHeadline, detail + "HTTP " + response.getStatusCode().value() + ".");
     }
 }
